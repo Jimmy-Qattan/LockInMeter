@@ -7,6 +7,11 @@ const video = document.getElementById("video");
 const canvas = document.querySelector("canvas");
 const ctx = canvas.getContext("2d");
 
+const fart = new Audio("audio/fart.mp3");
+const goofyahh = new Audio("audio/goofyahh.mp3");
+
+const allAudio = [fart, goofyahh];
+
 let handmarkData = [];
 let posemarkData;
 
@@ -229,16 +234,23 @@ pose.onResults((results) => {
       }
     }
 
-    if (userCaught) {
+    if (userCaught && handmarkData) {
       if (touchingFace == false) {
         touchingFace = true;
         console.log("STOP");
+        allAudio.forEach((audio) => {
+          audio.play();
+        });
       } else {
         console.log("I SAID STOP");
       }
     } else {
       console.log("Keep studying, buddy.");
       touchingFace = false;
+      allAudio.forEach((audio) => {
+        audio.pause();
+        audio.currentTime = 0;
+      });
     }
 
     //console.log(results.poseLandmarks);

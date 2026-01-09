@@ -7,7 +7,13 @@ const video = document.getElementById("video");
 const canvas = document.querySelector("canvas");
 const ctx = canvas.getContext("2d");
 
+/** @type {BluetoothRemoteGATTCharacteristic} */
+const connect = document.getElementById("connect");
+let whipperCharacteristic;
+const setBuffer = new Uint8Array([1]);
+
 const fart = new Audio("audio/fart.mp3");
+fart.volume = 1;
 const goofyahh = new Audio("audio/goofyahh.mp3");
 
 const allAudio = [fart, goofyahh];
@@ -16,6 +22,9 @@ let handmarkData = [];
 let posemarkData;
 
 const excludedPoseMarks = [11, 12, 15, 16, 17, 18, 19, 20, 21, 22];
+const includedMarks = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+
+let caughtMarks = [];
 
 let touchingFace = false;
 let userCaught = false;
@@ -42,6 +51,36 @@ class Vector {
   }
 }
 
+async function connectDEV() {
+  const device = await navigator.bluetooth.requestDevice({
+    filters: [
+      { services: ["4f8b9504-0c21-4994-b330-350b96a44b41".toLowerCase()] },
+    ],
+  });
+  if (!device.gatt) {
+    throw new Error("Device does not support gatt");
+  }
+
+  const server = await device.gatt.connect();
+  const service = await server.getPrimaryService(
+    "4f8b9504-0c21-4994-b330-350b96a44b41".toLowerCase()
+  );
+
+  whipperCharacteristic = await service.getCharacteristic(
+    "d3311aa7-74a1-42de-83aa-e6014e590b44".toLowerCase()
+  );
+}
+
+const dataView = new DataView(new ArrayBuffer(1));
+async function sendTrigger(value, characteristic) {
+  dataView.setUint8(0, value);
+  await characteristic.writeValue(dataView);
+}
+
+connect.addEventListener("click", function () {
+  connectDEV();
+});
+
 async function start() {
   const vision = await FilesetResolver.forVisionTasks(
     "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
@@ -55,6 +94,9 @@ async function start() {
     },
     runningMode: "VIDEO",
     numHands: 2,
+    modelComplexity: 1,
+    minDetectionConfidence: 0.6,
+    minTrackingConfidence: 0.6,
   });
 
   const stream = await navigator.mediaDevices.getUserMedia({
@@ -144,8 +186,8 @@ pose.setOptions({
   smoothLandmarks: true,
   enableSegmentation: false,
   smoothSegmentation: true,
-  minDetectionConfidence: 0.5,
-  minTrackingConfidence: 0.5,
+  minDetectionConfidence: 0.7,
+  minTrackingConfidence: 0.7,
 });
 
 pose.onResults((results) => {
@@ -157,24 +199,9 @@ pose.onResults((results) => {
     value.x = 1 - value.x;
   });
 
-  //ctx.save();
-  //ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-  // Draw video frame
-  //ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
-
-  // Draw pose landmarks
   userCaught = false;
+  caughtMarks = [];
   if (results.poseLandmarks) {
-    /*drawConnectors(ctx, results.poseLandmarks, POSE_CONNECTIONS, {
-      color: "#00FF00",
-      lineWidth: 4,
-    });
-
-    drawLandmarks(ctx, results.poseLandmarks, {
-      color: "#FF0000",
-      lineWidth: 2,
-    });*/
 
     for (let i = 0; i < results.poseLandmarks.length; i++) {
       ctx.font = "20px Ariel";
@@ -190,7 +217,7 @@ pose.onResults((results) => {
         results.poseLandmarks[i].y * canvas.height
       );
 
-      if (handmarkData && !excludedPoseMarks.includes(i)) {
+      if (handmarkData && includedMarks.includes(i)) {
         handmarkData.forEach((hand) => {
           hand.forEach((point) => {
             let landmarkData = new Vector(
@@ -202,8 +229,8 @@ pose.onResults((results) => {
               getDist(landmarkData, posemarkVector) <= 35 &&
               getDist(landmarkData, posemarkVector) != 0
             ) {
-              //console.log("NOT LOCKED IN NOT LOCKED IN!");
               userCaught = true;
+              caughtMarks.push(point);
 
               let lockOutVector = new Vector(
                 (landmarkData.x + posemarkVector.x) / 2,
@@ -224,28 +251,37 @@ pose.onResults((results) => {
               ctx.fill();
               ctx.stroke();
 
-              //console.log(getDist(landmarkData, posemarkVector));
             }
           });
         });
 
-        //console.log(lowestValue);
-        //console.log("User touching face: " + touchingFace);
       }
     }
 
     if (userCaught && handmarkData) {
       if (touchingFace == false) {
         touchingFace = true;
-        console.log("STOP");
+        if (whipperCharacteristic) {
+          sendTrigger(1, whipperCharacteristic);
+        }
         allAudio.forEach((audio) => {
           audio.play();
         });
+        window.setTimeout(function () {
+          caughtMarks.forEach((mark) => {
+            mark.x = 0;
+            mark.y = 0;
+          });
+        }, 5000);
       } else {
-        console.log("I SAID STOP");
+        if (whipperCharacteristic) {
+          sendTrigger(1, whipperCharacteristic);
+        }
       }
     } else {
-      console.log("Keep studying, buddy.");
+      if (whipperCharacteristic) {
+        sendTrigger(0, whipperCharacteristic);
+      }
       touchingFace = false;
       allAudio.forEach((audio) => {
         audio.pause();
@@ -253,13 +289,10 @@ pose.onResults((results) => {
       });
     }
 
-    //console.log(results.poseLandmarks);
   }
 
-  //ctx.restore();
 });
 
-// Start camera
 const camera = new Camera(video, {
   onFrame: async () => {
     await pose.send({ image: video });
